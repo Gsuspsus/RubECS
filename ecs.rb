@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-class DuplicateComponentError < StandardError 
+class DuplicateComponentError < StandardError
   def initialize(name)
     msg = "Can't add duplicate component '#{name}'"
     super(msg)
@@ -14,6 +14,7 @@ class InvalidNameError < StandardError
   end
 end
 
+# Represents an entity. Contains methods for CRUD relating to its components
 class Entity
   attr_reader :id, :components
 
@@ -28,7 +29,7 @@ class Entity
 
   def add(component)
     if @components.key?(component.class)
-      raise DuplicateComponentError.new(component.class.name) 
+      raise DuplicateComponentError, component.class.name
     else
       @components[component.class] = component
     end
@@ -40,53 +41,67 @@ class Entity
 
   def update(name, &block)
     component = get(name)
-    component.tap &block
+    component.tap(&block)
   end
 
   def has_component?(name)
-    raise InvalidNameError.new(name) unless name.is_a?(Class)
+    raise InvalidNameError, name unless name.is_a?(Class)
+
     @components.any? { |n, _| n == name }
   end
-
 end
 
+
+# Is responsible for Entity instantiation.
+# Is not meant to be called directly but rather through the manager class
 class EntityCreator
-  @@current_id = 0
-  def self.create_new_entity(*components)
+  def initialize
+    @@current_id = 0
+  end
+
+  def create_new_entity(*components)
     @@current_id += 1
     entries = components.map { |e| make_entry_from(e) }.reduce(&:merge)
     Entity.new(@@current_id, entries)
   end
 
-  def self.make_entry_from(component)
+  def make_entry_from(component)
     { component.class => component }
   end
 end
 
+# Keeps track of all entities and is responsible for CRUD relating to them.
 class EntityManager
-  @@entities = []
+
+  def initialize
+    @entities = []
+    @creator = EntityCreator.new
+  end
 
   def create_entity(*components)
-    entity = EntityCreator.create_new_entity(*components)
-    @@entities << entity
-    return entity
+    entity = @creator.create_new_entity(*components)
+    @entities << entity
+    entity
   end
 
   def find_by_id(id)
-    @@entities.find { |e| e.id == id }
+    @entities.find { |e| e.id == id }
   end
 
   def find_by_component_names(*names)
-    @@entities.filter {|e| names.any?{|name| e.has_component?(name)}}
+    @entities.filter { |e| names.any? { |name| e.has_component?(name) } }
   end
 
   def remove_by_id(id)
-    @@entities.delete_if { |e| e.id == id}
+    @entities.delete_if { |e| e.id == id }
   end
 end
 
+# Represents the main point of interaction with the library.
+# Handles the creation and deletion of systems and delegates any other CRUD to manager
 class World
   attr_reader :manager
+
   def initialize
     @manager = EntityManager.new
     @systems = []
@@ -97,22 +112,23 @@ class World
   end
 
   def remove_system(name)
-    @systems.delete_if {|s| s.class == name}
+    @systems.delete_if { |s| s.instance_of?(name) }
   end
 
   def process
-    @systems.each {|s| s.process(@manager)}
+    @systems.each { |s| s.process(@manager) }
   end
 
-  def method_missing(m, *args, &block) #todo - actually implement methods
+  # TODO: - actually implement methods
+  def method_missing(m, *args, &block)
     if @manager.respond_to?(m)
-      @manager.send(m,*args,&block) 
+      @manager.send(m, *args, &block)
     else
-      raise NoMethodError.new
+      raise NoMethodError
     end
   end
 
-  def respond_to_missing?(m, include_private = false)
-    return @manager.respond_to?(m)
+  def respond_to_missing?(m, _include_private = false)
+    @manager.respond_to?(m)
   end
 end
